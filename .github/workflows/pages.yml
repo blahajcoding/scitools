@@ -20,6 +20,8 @@ jobs:
           node-version: '22'
       - run: npm test
       - run: npm run build
+      - name: Test interactions with runner Chrome
+        run: node browser-smoke.mjs
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

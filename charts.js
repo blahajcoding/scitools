@@ -15,9 +15,13 @@ export function wrap(text, max = 26) {
 }
 const textLines = (lines, x, y, size = 16, anchor = 'start', color = '#26343b') => `<text x="${x}" y="${y}" text-anchor="${anchor}" fill="${color}" font-family="Arial, sans-serif" font-size="${size}">${lines.map((s, i) => `<tspan x="${x}" dy="${i ? size * 1.4 : 0}">${esc(s)}</tspan>`).join('')}</text>`;
 const svg = (w,h,body) => `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img">${body}</svg>`;
-export function radarSVG(title, variables) {
+export function radarSVG(title, variables, experiments) {
   if (variables.length < 3) throw new Error('Add at least three variables');
   const n = variables.length;
+  const series=experiments?.length?experiments:[{name:'Experiment 1',color:'#167b78',values:Object.fromEntries(variables.map((v,i)=>[v.id??i,v.value]))}];
+  const color=e=>/^#[0-9a-f]{6}$/i.test(e.color)?e.color:'#167b78';
+  const value=(e,v,i)=>clamp(e.values?.[v.id??i]);
+  const dashes=['','9 4','3 3','12 4 3 4'];
   // Grow the chart rather than silently dropping axes or crowding labels.
   const labelLines = variables.map(v => wrap(v.label || 'Untitled', 22));
   const labelHeight = Math.max(...labelLines.map(lines => (lines.length + 1) * 23));
@@ -35,11 +39,20 @@ export function radarSVG(title, variables) {
     const [x,y] = p(i,radius), [lx,ly] = p(i,radius+38);
     out += `<line x1="${cx}" y1="${cy}" x2="${x}" y2="${y}" stroke="#d9e0e4"/>`;
     const dx = lx-cx, anchor = Math.abs(dx)<1 ? 'middle' : dx>0 ? 'start' : 'end';
-    out += textLines([...labelLines[i], `${clamp(v.value).toFixed(1)} / 10`],lx,ly-(labelLines[i].length*18)/2,16,anchor);
+    out += textLines(series.length===1?[...labelLines[i], `${value(series[0],v,i).toFixed(1)} / 10`]:labelLines[i],lx,ly-(labelLines[i].length*18)/2,16,anchor);
   });
-  out += `<polygon points="${variables.map((v,i)=>p(i,radius*clamp(v.value)/10).join(',')).join(' ')}" fill="#167b7840" stroke="#167b78" stroke-width="3"/>`;
-  variables.forEach((v,i)=>{const [x,y]=p(i,radius*clamp(v.value)/10);out+=`<circle cx="${x}" cy="${y}" r="4" fill="#167b78"/>`;});
-  return svg(size,size+60,out);
+  series.forEach((e,j)=>{
+    const c=color(e),dash=dashes[j%dashes.length];
+    out+=`<polygon points="${variables.map((v,i)=>p(i,radius*value(e,v,i)/10).join(',')).join(' ')}" fill="${c}" fill-opacity="0.08" stroke="${c}" stroke-width="3" stroke-dasharray="${dash}"/>`;
+    variables.forEach((v,i)=>{const [x,y]=p(i,radius*value(e,v,i)/10);out+=`<circle cx="${x}" cy="${y}" r="4" fill="${c}"><title>${esc(e.name||'Untitled experiment')}: ${esc(v.label)} = ${value(e,v,i)}</title></circle>`;});
+  });
+  let legendY=size+60;
+  series.forEach((e,j)=>{
+    const lines=wrap(e.name||'Untitled experiment',Math.max(20,Math.floor((size-240)/9)));
+    out+=`<line x1="80" y1="${legendY-5}" x2="120" y2="${legendY-5}" stroke="${color(e)}" stroke-width="4" stroke-dasharray="${dashes[j%dashes.length]}"/>${textLines(lines,140,legendY,16)}`;
+    legendY+=Math.max(36,lines.length*23+12);
+  });
+  return svg(size,legendY+28,out);
 }
 export function nodeHeight(node, includeResearch=true) {
   return 36 + wrap(node.title || 'Untitled',24).length*22 + (includeResearch ? wrap(node.notes || '',34).length*18 + (node.source ? wrap(node.source,34).length*16+12 : 0) : 0);

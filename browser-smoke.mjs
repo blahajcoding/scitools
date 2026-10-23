@@ -36,6 +36,17 @@ try{
  await evaluate('document.querySelector("[data-tool=radar]").click()');assert.equal(await evaluate('document.querySelectorAll("#radar-preview circle").length'),5);
  await evaluate('document.querySelector("#add-variable").click()');assert.equal(await evaluate('document.querySelectorAll("#radar-preview circle").length'),6);
  await evaluate('(()=>{const n=document.querySelector(".variable-value input[type=number]");n.value="7.3";n.dispatchEvent(new InputEvent("input",{bubbles:true}));})()');assert.ok(await evaluate('document.querySelector("#radar-preview").textContent.includes("7.3 / 10")'));
+ // Experiments share labels but retain independent decimal values and colours.
+ await evaluate('document.querySelector("#add-experiment").click()');assert.equal(await evaluate('document.querySelectorAll("#radar-preview circle").length'),12);
+ await evaluate('(()=>{const n=document.querySelector("#experiment-name");n.value="Treatment B";n.dispatchEvent(new InputEvent("input",{bubbles:true}));const v=document.querySelector(".variable-value input[type=number]");v.value="2.65";v.dispatchEvent(new InputEvent("input",{bubbles:true}));const c=document.querySelector("#experiment-color");c.value="#aa3399";c.dispatchEvent(new InputEvent("input",{bubbles:true}));})()');
+ assert.ok(await evaluate('document.querySelector("#radar-preview").textContent.includes("Treatment B")'));
+ assert.equal(await evaluate('JSON.parse(localStorage.getItem("scitools-v1")).experiments[0].values.v1'),7.3);
+ assert.equal(await evaluate('JSON.parse(localStorage.getItem("scitools-v1")).experiments[1].values.v1'),2.65);
+ assert.equal(await evaluate('JSON.parse(localStorage.getItem("scitools-v1")).experiments[1].color'),'#aa3399');
+ await evaluate('(()=>{const s=document.querySelector("#experiment-select");s.selectedIndex=0;s.dispatchEvent(new Event("change",{bubbles:true}));})()');assert.equal(await evaluate('Number(document.querySelector(".variable-value input[type=number]").value)'),7.3);
+ await evaluate('document.querySelector("#add-variable").click()');assert.equal(await evaluate('document.querySelectorAll("#radar-preview circle").length'),14);
+ assert.ok(await evaluate('(()=>{const s=JSON.parse(localStorage.getItem("scitools-v1"));const id=s.variables.at(-1).id;return s.experiments.every(e=>e.values[id]===5);})()'));
+ await evaluate('document.querySelector(".variable-head input").value="Shared axis";document.querySelector(".variable-head input").dispatchEvent(new InputEvent("input",{bubbles:true}))');assert.ok(await evaluate('document.querySelector("#radar-preview").textContent.includes("Shared axis")'));
  // Exercise real SVG decoding and canvas PNG encoding without relying on downloads.
  assert.equal(await evaluate('(async()=>{const svg=document.querySelector("#radar-preview svg").outerHTML;const u=URL.createObjectURL(new Blob([svg],{type:"image/svg+xml"}));try{const i=new Image();i.src=u;await i.decode();const c=document.createElement("canvas");c.width=1200;c.height=1200;c.getContext("2d").drawImage(i,0,0,1200,1200);const b=await new Promise(r=>c.toBlob(r,"image/png"));return b.type;}finally{URL.revokeObjectURL(u);}})()'),'image/png');
  await evaluate('document.querySelector("[data-tool=map]").click()');

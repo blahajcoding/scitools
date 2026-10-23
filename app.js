@@ -1,7 +1,8 @@
 import {esc,clamp,radarSVG,mapSVG} from './charts.js';
+import {branchPosition,connect,curveBetween,History} from './map-tools.js';
 const $=s=>document.querySelector(s), uid=()=>crypto.randomUUID();
 const defaults=()=>({version:1,mapTitle:'How do green spaces affect wellbeing?',radarTitle:'Research profile',nodes:[{id:'a',title:'Green spaces & wellbeing',notes:'How does access to nature influence daily life?',source:'',x:380,y:210,color:'#e1eee4'},{id:'b',title:'Physical health',notes:'Look at activity levels and time spent outdoors.',source:'Add a paper or reference here',x:60,y:70,color:'#f4edda'},{id:'c',title:'Mental wellbeing',notes:'Explore stress, attention and connection to place.',source:'',x:720,y:85,color:'#e6ecf4'},{id:'d',title:'Next questions',notes:'Does proximity matter more than the size of a park?',source:'',x:630,y:420,color:'#f0e6e8'}],edges:[{from:'a',to:'b'},{from:'a',to:'c'},{from:'c',to:'d'}],variables:[{id:'v1',label:'Evidence quality',value:7.5},{id:'v2',label:'Accessibility',value:8},{id:'v3',label:'Impact',value:6.2},{id:'v4',label:'Feasibility',value:8.5},{id:'v5',label:'Originality',value:5.5}]});
-let state=defaults(),tool='map',selected='a',zoom=1,timer;
+let state=defaults(),tool='map',selected='a',zoom=1,timer,linkFrom=null;
 function toast(s){$('#toast').textContent=s;$('#toast').hidden=false;clearTimeout(timer);timer=setTimeout(()=>$('#toast').hidden=true,4500);}
 function validate(s){
  if(!s||s.version!==1||!Array.isArray(s.nodes)||!Array.isArray(s.edges)||!Array.isArray(s.variables)||s.variables.length<3)throw Error('This is not a valid scitools project');
@@ -12,16 +13,16 @@ function validate(s){
 }
 try{const saved=localStorage.getItem('scitools-v1');if(saved)state=validate(JSON.parse(saved));}catch{toast('Could not restore saved work. Open a project backup if you have one.');}
 selected=state.nodes[0]?.id;
-function save(){try{localStorage.setItem('scitools-v1',JSON.stringify(state));$('#save-status').textContent='Saved on this device';}catch{$('#save-status').textContent='Not saved · download a backup';toast('Browser storage is unavailable or full. Use Save project to keep your work.');}}
+const history=new History(state);
+function save(record=true){if(record)history.record(state);$('#undo').disabled=!history.past.length;$('#redo').disabled=!history.future.length;try{localStorage.setItem('scitools-v1',JSON.stringify(state));$('#save-status').textContent='Saved on this device';}catch{$('#save-status').textContent='Not saved · download a backup';toast('Browser storage is unavailable or full. Use Save project to keep your work.');}}
 function current(){return state.nodes.find(n=>n.id===selected);}
 function render(){
  const isMap=tool==='map';
  document.querySelectorAll('.tab').forEach(b=>{b.classList.toggle('active',b.dataset.tool===tool);b.setAttribute('aria-pressed',b.dataset.tool===tool);});
  for(const id of ['map-controls','map-viewport','map-view-buttons'])$('#'+id).hidden=!isMap;
  for(const id of ['radar-controls','radar-preview','radar-caption'])$('#'+id).hidden=isMap;
- $('#tool-number').textContent=isMap?'01 / THINK IN CONNECTIONS':'02 / COMPARE AT A GLANCE';
- $('#heading').textContent=isMap?'A little room for big ideas':'Give your data a shape';
- $('#description').textContent=isMap?'Connect your thoughts. Keep the research attached.':'Turn your variables into a clear, labelled radar chart.';
+ $('#heading').textContent=isMap?'Mind map':'Radar chart';
+ $('#canvas-help').textContent=isMap?'Double-click space to add · drag background to pan':'Labelled axes · decimal values';
  $('#document-title').value=isMap?state.mapTitle:state.radarTitle;
  $('#canvas-caption').textContent=isMap?'MIND MAP':'RADAR CHART';
  if(isMap){renderList();renderEditor();renderMap();}else{renderVariables();renderRadar();}
@@ -33,31 +34,49 @@ function renderEditor(){const n=current();$('#node-editor').hidden=!n;if(!n)retu
  $('#link-target').replaceChildren(...targets.map(x=>new Option(x.title||'Untitled',x.id)));$('#add-link').disabled=!targets.length;
  $('#connections').replaceChildren();state.edges.forEach((e,i)=>{if(e.from!==n.id&&e.to!==n.id)return;const other=state.nodes.find(x=>x.id===(e.from===n.id?e.to:e.from));const row=document.createElement('div');row.className='connection';const text=document.createElement('span');text.textContent=(e.from===n.id?'→ ':'← ')+(other?.title||'Untitled');const b=document.createElement('button');b.type='button';b.textContent='×';b.setAttribute('aria-label','Remove connection');b.onclick=()=>{state.edges.splice(i,1);save();renderEditor();renderMap();};row.append(text,b);$('#connections').append(row);});
 }
+function chooseIdea(id){selected=id;renderList();renderEditor();document.querySelectorAll('.card').forEach(c=>c.classList.toggle('selected',c.dataset.id===id));}
+function createIdea(position,parent=null){const n={id:uid(),title:'New idea',notes:'',source:'',x:Math.max(0,position.x),y:Math.max(0,position.y),color:current()?.color||'#e7f3ef'};state.nodes.push(n);if(parent)connect(state.nodes,state.edges,parent,n.id);selected=n.id;linkFrom=null;save();renderList();renderEditor();renderMap();const card=[...document.querySelectorAll('.card')].find(c=>c.dataset.id===n.id);if(card){card.scrollIntoView({block:'nearest',inline:'nearest'});const title=card.querySelector('h3');title.focus();const range=document.createRange();range.selectNodeContents(title);const selection=getSelection();selection.removeAllRanges();selection.addRange(range);}}
 function renderMap(){
- const cards=$('#map-cards');cards.replaceChildren();
- state.nodes.forEach(n=>{const card=document.createElement('div');card.className='card'+(n.id===selected?' selected':'');card.style.cssText=`left:${n.x}px;top:${n.y}px;background:${/^#[0-9a-f]{6}$/i.test(n.color)?n.color:'#e7f3ef'}`;card.tabIndex=0;card.setAttribute('role','button');card.setAttribute('aria-label',`Edit ${n.title||'Untitled'}`);
- card.innerHTML=`<h3>${esc(n.title||'Untitled')}</h3><p>${esc(n.notes)}</p>${n.source?`<p class="reference">↗ ${esc(n.source)}</p>`:''}`;
- card.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();selected=n.id;renderList();renderEditor();renderMap();}};
- card.onpointerdown=e=>{if(e.button!==0)return;selected=n.id;renderList();renderEditor();cards.querySelectorAll('.card').forEach(c=>c.classList.toggle('selected',c===card));const sx=e.clientX,sy=e.clientY,ox=n.x,oy=n.y;card.setPointerCapture(e.pointerId);
+ const cards=$('#map-cards');cards.replaceChildren();$('#map-viewport').classList.toggle('linking',!!linkFrom);
+ $('#canvas-help').textContent=linkFrom?'Click another idea to connect · Esc to cancel':'Double-click space to add · drag background to pan';
+ state.nodes.forEach(n=>{const card=document.createElement('div');card.dataset.id=n.id;card.className='card'+(n.id===selected?' selected':'')+(n.id===linkFrom?' link-source':'');card.style.cssText=`left:${n.x}px;top:${n.y}px;background:${/^#[0-9a-f]{6}$/i.test(n.color)?n.color:'#e7f3ef'}`;card.tabIndex=0;card.setAttribute('role','group');card.setAttribute('aria-label',`Idea: ${n.title||'Untitled'}`);
+ card.innerHTML=`<span class="drag-grip" aria-hidden="true">⠿</span><h3 contenteditable="plaintext-only" role="textbox" aria-label="Idea title" spellcheck="true">${esc(n.title)}</h3><p class="inline-notes" contenteditable="plaintext-only" role="textbox" aria-label="Idea notes" aria-multiline="true" data-placeholder="Add a note…">${esc(n.notes)}</p>${n.source?`<p class="reference">↗ ${esc(n.source)}</p>`:''}<div class="node-actions"><button class="branch-action" title="Add a connected idea (Tab)">+ Branch</button><button class="link-action" title="Connect to another idea">Link →</button></div>`;
+ for(const [selector,key,limit] of [['h3','title',160],['.inline-notes','notes',10000]]){const input=card.querySelector(selector);input.onfocus=()=>chooseIdea(n.id);input.oninput=()=>{n[key]=input.innerText.slice(0,limit);if(input.innerText.length>limit)input.textContent=n[key];save();renderList();renderEditor();drawEdges();};input.onkeydown=e=>{if(key==='title'&&e.key==='Enter'){e.preventDefault();input.blur();card.focus();}};}
+ card.querySelector('.branch-action').onclick=()=>{chooseIdea(n.id);createIdea(branchPosition(n,state.nodes),n.id);};
+ card.querySelector('.link-action').onclick=()=>{chooseIdea(n.id);linkFrom=linkFrom===n.id?null:n.id;renderMap();};
+ card.onkeydown=e=>{if(e.target===card&&e.key==='Enter'){e.preventDefault();chooseIdea(n.id);card.querySelector('h3').focus();}};
+ card.onpointerdown=e=>{if(e.button!==0)return;
+ if(linkFrom){e.preventDefault();e.stopPropagation();if(linkFrom===n.id)return;if(connect(state.nodes,state.edges,linkFrom,n.id)){linkFrom=null;selected=n.id;save();renderList();renderEditor();renderMap();}else toast('Those ideas are already connected');return;}
+ chooseIdea(n.id);if(e.target.closest('button,[contenteditable]'))return;
+ const sx=e.clientX,sy=e.clientY,ox=n.x,oy=n.y;card.setPointerCapture(e.pointerId);
  card.onpointermove=ev=>{n.x=Math.max(0,ox+(ev.clientX-sx)/zoom);n.y=Math.max(0,oy+(ev.clientY-sy)/zoom);card.style.left=n.x+'px';card.style.top=n.y+'px';drawEdges();};
  const end=()=>{card.onpointermove=null;card.onpointerup=null;card.onpointercancel=null;save();drawEdges();};card.onpointerup=end;card.onpointercancel=end;};cards.append(card);});
  drawEdges();$('#count').textContent=`${state.nodes.length} ideas · ${state.edges.length} connections`;
 }
-function drawEdges(){const w=Math.max(1400,...state.nodes.map(n=>n.x+400)),h=Math.max(900,...state.nodes.map(n=>n.y+500));$('#map-world').style.width=w+'px';$('#map-world').style.height=h+'px';
- $('#map-edges').innerHTML='<defs><marker id="live-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#91a79a"/></marker></defs>'+state.edges.map(e=>{const a=state.nodes.find(n=>n.id===e.from),b=state.nodes.find(n=>n.id===e.to);if(!a||!b)return '';return `<path d="M${a.x+120},${a.y+45} Q${(a.x+b.x)/2+120},${a.y+45} ${b.x+120},${b.y+5}" fill="none" stroke="#91a79a" stroke-width="2" marker-end="url(#live-arrow)"/>`;}).join('');}
+function drawEdges(){const w=Math.max(1400,...state.nodes.map(n=>n.x+500)),h=Math.max(900,...state.nodes.map(n=>n.y+600));$('#map-world').style.width=w+'px';$('#map-world').style.height=h+'px';
+ const boxes=new Map([...document.querySelectorAll('.card')].map(c=>[c.dataset.id,{width:c.offsetWidth,height:c.offsetHeight}]));
+ $('#map-edges').innerHTML='<defs><marker id="live-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#91a79a"/></marker></defs>'+state.edges.map((e,i)=>{const a=state.nodes.find(n=>n.id===e.from),b=state.nodes.find(n=>n.id===e.to);if(!a||!b)return '';const d=curveBetween({...a,...boxes.get(a.id)},{...b,...boxes.get(b.id)});return `<path class="edge-hit" data-edge="${i}" d="${d}" fill="none" stroke="transparent" stroke-width="18"><title>Double-click to remove connection</title></path><path d="${d}" fill="none" stroke="#91a79a" stroke-width="2" marker-end="url(#live-arrow)"/>`;}).join('');
+ $('#map-edges').querySelectorAll('.edge-hit').forEach(p=>{p.ondblclick=e=>{e.stopPropagation();state.edges.splice(Number(p.dataset.edge),1);save();renderEditor();renderMap();};});}
 function renderVariables(){const list=$('#variable-list');list.replaceChildren();state.variables.forEach((v,i)=>{const row=document.createElement('div');row.className='variable';row.innerHTML=`<div class="variable-head"><input aria-label="Variable ${i+1} label" value="${esc(v.label)}" maxlength="160"><button aria-label="Remove variable ${i+1}" ${state.variables.length<=3?'disabled':''}>×</button></div><div class="variable-value"><input type="range" min="0" max="10" step="0.1" value="${v.value}" aria-label="${esc(v.label)} slider"><input type="number" min="0" max="10" step="0.1" value="${v.value}" aria-label="${esc(v.label)} value"></div>`;
  const [label,slider,number]=row.querySelectorAll('input');label.oninput=()=>{v.label=label.value;slider.setAttribute('aria-label',v.label+' slider');number.setAttribute('aria-label',v.label+' value');save();renderRadar();};slider.oninput=()=>{v.value=clamp(slider.value);number.value=v.value;save();renderRadar();};number.oninput=()=>{if(number.value===''||!Number.isFinite(number.valueAsNumber))return;v.value=clamp(number.value);slider.value=v.value;save();renderRadar();};number.onchange=()=>{number.value=v.value;};row.querySelector('button').onclick=()=>{state.variables.splice(i,1);save();renderVariables();renderRadar();};list.append(row);});}
 function renderRadar(){$('#radar-preview').innerHTML=radarSVG(state.radarTitle,state.variables);$('#count').textContent=`${state.variables.length} labelled variables · 0–10 scale`;}
 function setZoom(z){zoom=Math.min(2,Math.max(.2,z));$('#map-world').style.transform=`scale(${zoom})`;$('#zoom-label').textContent=Math.round(zoom*100)+'%';}
-$('.tab');document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{tool=b.dataset.tool;render();});
+document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{linkFrom=null;tool=b.dataset.tool;render();});
 $('#document-title').oninput=e=>{state[tool==='map'?'mapTitle':'radarTitle']=e.target.value;save();if(tool==='radar')renderRadar();};
-$('#add-node').onclick=()=>{const n={id:uid(),title:'New idea',notes:'',source:'',x:Math.max(20,$('#map-viewport').scrollLeft/zoom+80+Math.random()*150),y:Math.max(20,$('#map-viewport').scrollTop/zoom+80+Math.random()*150),color:'#e7f3ef'};state.nodes.push(n);selected=n.id;save();render();$('#node-title').focus();$('#node-title').select();};
+$('#add-node').onclick=()=>{const vp=$('#map-viewport');createIdea({x:vp.scrollLeft/zoom+80,y:vp.scrollTop/zoom+80});};
 for(const [id,key] of [['node-title','title'],['node-notes','notes'],['node-source','source'],['node-color','color']])$('#'+id).oninput=e=>{if(!current())return;current()[key]=e.target.value;save();renderList();renderMap();};
 $('#node-editor').onsubmit=e=>e.preventDefault();
-$('#add-link').onclick=()=>{const to=$('#link-target').value;if(!to||!current())return;state.edges.push({from:selected,to});save();renderEditor();renderMap();};
+$('#add-link').onclick=()=>{const to=$('#link-target').value;if(!to||!current())return;if(connect(state.nodes,state.edges,selected,to)){save();renderEditor();renderMap();}};
 $('#delete-node').onclick=()=>{if(!current()||!confirm('Delete this idea and its connections?'))return;state.nodes=state.nodes.filter(n=>n.id!==selected);state.edges=state.edges.filter(e=>e.from!==selected&&e.to!==selected);selected=state.nodes[0]?.id;save();render();};
 $('#add-variable').onclick=()=>{state.variables.push({id:uid(),label:`Variable ${state.variables.length+1}`,value:5});save();renderVariables();renderRadar();$('#variable-list').lastElementChild.querySelector('input').focus();};
 $('#zoom-in').onclick=()=>setZoom(zoom+.1);$('#zoom-out').onclick=()=>setZoom(zoom-.1);$('#fit-map').onclick=()=>{if(!state.nodes.length)return;const vp=$('#map-viewport');const minX=Math.min(...state.nodes.map(n=>n.x)),minY=Math.min(...state.nodes.map(n=>n.y)),maxX=Math.max(...state.nodes.map(n=>n.x+280)),maxY=Math.max(...state.nodes.map(n=>n.y+260));setZoom(Math.min(vp.clientWidth/(maxX-minX+80),vp.clientHeight/(maxY-minY+80),1));vp.scrollLeft=Math.max(0,(minX-30)*zoom);vp.scrollTop=Math.max(0,(minY-30)*zoom);};
+function restoreHistory(direction){const next=history[direction]();if(!next)return;state=next;linkFrom=null;if(!current())selected=state.nodes[0]?.id;save(false);render();}
+$('#undo').onclick=()=>restoreHistory('undo');$('#redo').onclick=()=>restoreHistory('redo');
+const viewport=$('#map-viewport');
+viewport.ondblclick=e=>{if(e.target.closest('.card'))return;const rect=viewport.getBoundingClientRect();createIdea({x:(e.clientX-rect.left+viewport.scrollLeft)/zoom,y:(e.clientY-rect.top+viewport.scrollTop)/zoom});};
+viewport.onpointerdown=e=>{if(e.button!==0||e.target.closest('.card'))return;if(linkFrom){linkFrom=null;renderMap();return;}const sx=e.clientX,sy=e.clientY,left=viewport.scrollLeft,top=viewport.scrollTop;viewport.setPointerCapture(e.pointerId);viewport.classList.add('panning');viewport.onpointermove=ev=>{viewport.scrollLeft=left-(ev.clientX-sx);viewport.scrollTop=top-(ev.clientY-sy);};const end=()=>{viewport.onpointermove=null;viewport.onpointerup=null;viewport.onpointercancel=null;viewport.classList.remove('panning');};viewport.onpointerup=end;viewport.onpointercancel=end;};
+viewport.addEventListener('wheel',e=>{if(!e.ctrlKey&&!e.metaKey)return;e.preventDefault();const r=viewport.getBoundingClientRect(),px=e.clientX-r.left,py=e.clientY-r.top,x=(viewport.scrollLeft+px)/zoom,y=(viewport.scrollTop+py)/zoom;setZoom(zoom*(e.deltaY<0?1.1:1/1.1));viewport.scrollLeft=x*zoom-px;viewport.scrollTop=y*zoom-py;},{passive:false});
+document.addEventListener('keydown',e=>{const editing=e.target.closest('input,textarea,select,[contenteditable]');if(e.key==='Escape'){linkFrom=null;if(e.target.isContentEditable)e.target.blur();renderMap();return;}if(editing||tool!=='map')return;if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();restoreHistory(e.shiftKey?'redo':'undo');return;}if(e.key==='Tab'&&e.target.closest('.card')){e.preventDefault();if(current())createIdea(branchPosition(current(),state.nodes),selected);}if(e.key==='Delete'||e.key==='Backspace'){if(current()){e.preventDefault();$('#delete-node').click();}}});
 function download(blob,name){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);}
 const filename=()=>((tool==='map'?state.mapTitle:state.radarTitle)||'scitools').replace(/[^a-z0-9-_]+/gi,'-').slice(0,80);
 function exportSVG(){let s=tool==='map'?mapSVG(state.mapTitle,state.nodes,state.edges,{research:$('#include-research').checked}):radarSVG(state.radarTitle,state.variables);if($('#transparent').checked)s=s.replace(/<rect\b[^>]*fill="white"[^>]*\/>/,'');return s;}

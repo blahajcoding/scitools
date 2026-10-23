@@ -1,0 +1,15 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {branchPosition,connect,curveBetween,History} from './map-tools.js';
+const nodes=[{id:'a',x:100,y:100},{id:'b',x:440,y:100}];
+test('new branch is placed to the right of its parent',()=>assert.deepEqual(branchPosition(nodes[0],[nodes[0]]),{x:440,y:100}));
+test('branch placement avoids existing ideas',()=>assert.deepEqual(branchPosition(nodes[0],nodes),{x:440,y:320}));
+test('connections are directed and reject duplicates, missing nodes and self-links',()=>{const edges=[];assert.equal(connect(nodes,edges,'a','b'),true);assert.equal(connect(nodes,edges,'a','b'),false);assert.equal(connect(nodes,edges,'a','a'),false);assert.equal(connect(nodes,edges,'x','b'),false);assert.equal(connect(nodes,edges,'b','a'),true);assert.equal(edges.length,2);});
+test('connection curves end at card boundaries',()=>{assert.equal(curveBetween({x:0,y:0,width:240,height:100},{x:400,y:0,width:240,height:100}),'M240,50 C320,50 320,50 400,50');});
+test('vertical curves contain finite coordinates',()=>{const d=curveBetween({x:0,y:0,width:240,height:100},{x:0,y:300,width:240,height:200});assert.ok(!/NaN|Infinity/.test(d));assert.ok(d.startsWith('M120,100'));});
+test('coincident card centres do not generate invalid paths',()=>assert.equal(curveBetween({x:0,y:0,width:240,height:100},{x:0,y:0,width:240,height:100}),''));
+test('history undoes and redoes mutations without sharing references',()=>{const s={nodes:[]},h=new History(s);s.nodes.push({id:'a'});h.record(s);s.nodes[0].id='b';h.record(s);assert.deepEqual(h.undo(),{nodes:[{id:'a'}]});assert.deepEqual(h.undo(),{nodes:[]});assert.equal(h.undo(),null);assert.deepEqual(h.redo(),{nodes:[{id:'a'}]});assert.deepEqual(h.redo(),{nodes:[{id:'b'}]});});
+test('a fresh edit clears redo history',()=>{const h=new History(0);h.record(1);h.undo();h.record(2);assert.equal(h.redo(),null);assert.equal(h.undo(),0);});
+test('identical saves do not add undo steps and history is bounded',()=>{const h=new History(0,2);h.record(0);assert.equal(h.past.length,0);h.record(1);h.record(2);h.record(3);assert.equal(h.past.length,2);assert.equal(h.undo(),2);assert.equal(h.undo(),1);assert.equal(h.undo(),null);});
+test('promotional heading block is removed',()=>{const html=readFileSync(new URL('./index.html',import.meta.url),'utf8');assert.ok(!html.includes('A little room for big ideas'));assert.ok(!html.includes('THINK IN CONNECTIONS'));assert.ok(!html.includes('Connect your thoughts'));assert.ok(html.includes('id="canvas-help"'));});
